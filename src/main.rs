@@ -5,6 +5,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use raw_cpuid::CpuId;
 use std::fs::File;
+use std::time::Instant;
 use std::io::{self, Read, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -14,7 +15,9 @@ use std::sync::{
 };
 use walkdir::WalkDir;
 
+//
 //  CLI
+//
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -51,7 +54,9 @@ struct Cli {
     export: Option<PathBuf>,
 }
 
+//
 //  Helpers
+//
 
 fn truncate_filename(path: &Path, width: usize) -> String {
     let s = path.to_string_lossy().to_string();
@@ -66,6 +71,39 @@ fn yesno(v: bool) -> &'static str {
     if v { "\x1b[32mYES\x1b[0m" } else { "\x1b[31mNO\x1b[0m" }
 }
 
+/// Parses a size string with optional unit suffixes (e.g., "1GB", "512MB", "1024").
+/// Supports: B, KB/K, MB/M, GB/G, TB/T.
+/// Returns the size in bytes as u64, or None if parsing fails.
+fn parse_size(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    let (num_str, suffix) = if s.chars().all(|c| c.is_ascii_digit()) {
+        (s, "")
+    } else {
+        // Find the first non-digit character to split number and suffix
+        let last_digit_idx = s.chars().position(|c| !c.is_ascii_digit())?;
+        let (num, suf) = s.split_at(last_digit_idx);
+        (num, suf)
+    };
+
+    let num: u64 = num_str.parse().ok()?;
+    let multiplier = match suffix.to_uppercase().as_str() {
+        "" | "B" => 1,
+        "KB" | "K" => 1024,
+        "MB" | "M" => 1024 * 1024,
+        "GB" | "G" => 1024 * 1024 * 1024,
+        "TB" | "T" => 1024 * 1024 * 1024 * 1024,
+        _ => return None,
+    };
+
+    num.checked_mul(multiplier)
+}
+
+/// Detects AMD Zen microarchitecture based on CPU family and model IDs.
+/// These ranges are estimates and may not be 100% accurate for all CPUs.
 fn detect_zen(family: u8, model: u8) -> &'static str {
     match (family, model) {
         (23, 1..=17) => "Zen 1 (estimated)",
@@ -77,6 +115,8 @@ fn detect_zen(family: u8, model: u8) -> &'static str {
     }
 }
 
+/// Prints CPU information and hardware acceleration capabilities.
+/// CRC32 performance benefits from SSE4.2 (CRC32 instruction) and other SIMD features.
 fn print_cpu_info() {
     println!("\x1b[36m=== CPU Hardware Acceleration ===\x1b[0m");
 
@@ -109,8 +149,12 @@ fn print_cpu_info() {
     println!();
 }
 
+//
 //  File collection
+//
 
+/// Collects files from various input sources: directories, glob patterns, or individual files.
+/// Handles recursive directory traversal and extension filtering.
 fn collect_files(cli: &Cli) -> Vec<PathBuf> {
     let mut out = Vec::new();
 
@@ -141,6 +185,7 @@ fn collect_files(cli: &Cli) -> Vec<PathBuf> {
             continue;
         }
 
+        // Handle glob patterns (*, ?, [ ])
         if s.contains('*') || s.contains('?') || s.contains('[') {
             for entry in glob(&s).unwrap() {
                 if let Ok(path) = entry {
@@ -168,7 +213,9 @@ fn collect_files(cli: &Cli) -> Vec<PathBuf> {
     out
 }
 
+//
 //  Live progress hashing (pass 1)
+//
 
 fn compute_crc32_live(
     path: &PathBuf,
@@ -212,7 +259,9 @@ fn compute_crc32_live(
     Ok(crc)
 }
 
+//
 //  Silent hashing (pass 2)
+//
 
 fn compute_crc32_silent(path: &PathBuf) -> io::Result<String> {
     let mut file = File::open(path)?;
@@ -230,7 +279,9 @@ fn compute_crc32_silent(path: &PathBuf) -> io::Result<String> {
     Ok(format!("{:08X}", hasher.finalize()))
 }
 
+//
 //  Hash mode (parallel live bars)
+//
 
 fn table_hash(files: Vec<PathBuf>, threads: Option<usize>) -> io::Result<()> {
     if let Some(t) = threads {
@@ -278,7 +329,9 @@ fn table_hash(files: Vec<PathBuf>, threads: Option<usize>) -> io::Result<()> {
     Ok(())
 }
 
+//
 //  Verify mode (parallel live bars)
+//
 
 fn compute_crc32_live_verify(
     expected: &str,
@@ -340,18 +393,46 @@ fn table_verify(manifest: &PathBuf, threads: Option<usize>) -> io::Result<()> {
 
     let mut entries = Vec::new();
 
-    for line in reader.lines() {
-        let line = line?;
+    let is_csv = manifest.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("csv"))
+        .unwrap_or(false);
+
+    for (line_num, line_result) in reader.lines().enumerate() {
+        let line = line_result?;
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
 
-        let mut parts = line.split_whitespace();
-        let expected = parts.next().unwrap().to_string();
-        let filename = parts.next().unwrap().to_string();
+        if is_csv && line_num == 0 && line.starts_with("\"file_path\"") {
+            // Skip CSV header
+            continue;
+        }
 
-        entries.push((expected, PathBuf::from(filename)));
+        if is_csv {
+            // Parse CSV format: "file_path","source_crc","computed_crc","status"
+            let parts: Vec<&str> = line.split(',').collect();
+            if parts.len() < 4 {
+                eprintln!("Warning: Invalid CSV line {}: {}", line_num + 1, line);
+                continue;
+            }
+            let file_path = parts[0].trim_matches('"').to_string();
+            let expected_crc = parts[1].trim_matches('"').to_string();
+            entries.push((expected_crc, PathBuf::from(file_path)));
+        } else {
+            // Parse manifest format: expected_crc filename
+            let mut parts = line.split_whitespace();
+            let expected = parts.next().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData,
+                    format!("Line {}: missing expected CRC", line_num + 1))
+            })?.to_string();
+            let filename = parts.next().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData,
+                    format!("Line {}: missing filename", line_num + 1))
+            })?.to_string();
+            entries.push((expected, PathBuf::from(filename)));
+        }
     }
 
     println!(
@@ -401,7 +482,9 @@ fn table_verify(manifest: &PathBuf, threads: Option<usize>) -> io::Result<()> {
     Ok(())
 }
 
+//
 //  Export mode (double-pass + CSV/TXT)
+//
 
 fn is_csv(path: &Path) -> bool {
     path.extension()
@@ -424,6 +507,10 @@ fn csv_escape(s: &str) -> String {
     out
 }
 
+/// Exports CRC32 results to CSV or TXT file using double-pass hashing for verification.
+/// First pass: compute CRC with progress bars for user feedback.
+/// Second pass: recompute silently to verify consistency.
+/// This ensures data integrity and detects any I/O issues.
 fn export_results(files: Vec<PathBuf>, export_path: &PathBuf, threads: Option<usize>) -> io::Result<()> {
     if let Some(t) = threads {
         rayon::ThreadPoolBuilder::new().num_threads(t).build_global().ok();
@@ -461,9 +548,9 @@ fn export_results(files: Vec<PathBuf>, export_path: &PathBuf, threads: Option<us
         let err_count = Arc::clone(&err_count);
         let results = Arc::clone(&results);
 
-        let source_crc_res = compute_crc32_live(path, &mp);
+        let source_crc_res = compute_crc32_live(path, &mp);  // First pass with progress
         if let Ok(source_crc) = source_crc_res {
-            let computed_crc_res = compute_crc32_silent(path);
+            let computed_crc_res = compute_crc32_silent(path);  // Second pass silent
             match computed_crc_res {
                 Ok(computed_crc) => {
                     let status = if computed_crc == source_crc {
@@ -536,33 +623,146 @@ fn export_results(files: Vec<PathBuf>, export_path: &PathBuf, threads: Option<us
     Ok(())
 }
 
-//  Bench (placeholder)
+//
+// ─────────────────────────────────────────────────────────────
+//   BENCHMARK SUITE (Option C)
+// ─────────────────────────────────────────────────────────────
+//
 
-fn bench_crc32(_size_str: &str, _threads: Option<usize>) {
-    println!("Benchmark not implemented in this build.");
+fn bench_crc32(size: u64, threads: Option<usize>) {
+    if let Some(t) = threads {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(t)
+            .build_global()
+            .ok();
+    }
+
+    println!("=== CRC32 Benchmark Suite ===");
+    println!("Total benchmark size: {:.2} GB", size as f64 / 1e9);
+
+    let buffer_sizes = [4 * 1024, 64 * 1024, 1 * 1024 * 1024];
+
+    //
+    // Single-thread benchmark
+    //
+    println!("\n[1] Single-thread benchmark");
+
+    let mut buffer = vec![0u8; 1 * 1024 * 1024];
+    let mut hasher = Hasher::new();
+
+    let start = Instant::now();
+    let mut processed = 0;
+
+    while processed < size {
+        hasher.update(&buffer);
+        processed += buffer.len() as u64;
+    }
+
+    let elapsed = start.elapsed().as_secs_f64();
+    println!(
+        "Throughput: {:.2} GB/s",
+        (processed as f64 / 1e9) / elapsed
+    );
+
+    //
+    // Multi-thread benchmark
+    //
+    println!("\n[2] Multi-thread benchmark");
+
+    let threads_used = threads.unwrap_or_else(num_cpus::get);
+    let per_thread = size / threads_used as u64;
+
+    let start = Instant::now();
+
+    (0..threads_used).into_par_iter().for_each(|_| {
+        let mut hasher = Hasher::new();
+        let mut buffer = vec![0u8; 1 * 1024 * 1024];
+        let mut processed = 0;
+
+        while processed < per_thread {
+            hasher.update(&buffer);
+            processed += buffer.len() as u64;
+        }
+    });
+
+    let elapsed = start.elapsed().as_secs_f64();
+    println!(
+        "Total throughput: {:.2} GB/s",
+        (size as f64 / 1e9) / elapsed
+    );
+
+    //
+    // Buffer size comparison
+    //
+    println!("\n[3] Buffer size comparison");
+
+    for &bs in &buffer_sizes {
+        let mut buffer = vec![0u8; bs];
+
+        // Single-thread
+        let start = Instant::now();
+        let mut processed = 0;
+        let mut hasher = Hasher::new();
+
+        while processed < size {
+            hasher.update(&buffer);
+            processed += bs as u64;
+        }
+
+        let elapsed_single = start.elapsed().as_secs_f64();
+
+        // Multi-thread
+        let start = Instant::now();
+
+        (0..threads_used).into_par_iter().for_each(|_| {
+            let mut hasher = Hasher::new();
+            let mut processed = 0;
+
+            while processed < per_thread {
+                hasher.update(&buffer);
+                processed += bs as u64;
+            }
+        });
+
+        let elapsed_multi = start.elapsed().as_secs_f64();
+
+        println!(
+            "{} KB: {:.2} GB/s (1 thread), {:.2} GB/s ({} threads)",
+            bs / 1024,
+            (size as f64 / 1e9) / elapsed_single,
+            (size as f64 / 1e9) / elapsed_multi,
+            threads_used
+        );
+    }
 }
 
+
+// ============================================================================
 //  Main
+//
 
 fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
     print_cpu_info();
 
+    // Benchmark mode
     if let Some(size_str) = cli.bench {
-        bench_crc32(&size_str, cli.threads);
+        let size = parse_size(&size_str).unwrap_or(4 * 1024 * 1024 * 1024);
+        bench_crc32(size, cli.threads);
         return Ok(());
     }
 
+    // Verification mode - check files against manifest
     if let Some(manifest) = cli.verify.as_ref() {
         return table_verify(manifest, cli.threads);
     }
 
+    // Normal operation: collect files and either export or hash
     let files = collect_files(&cli);
-
     if let Some(export_path) = cli.export.as_ref() {
         return export_results(files, export_path, cli.threads);
     }
-
+    // Default: hash files with live progress bars
     table_hash(files, cli.threads)
 }
