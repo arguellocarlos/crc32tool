@@ -81,7 +81,7 @@ This will install:
 
 ### 2. Clone the Repository
 ```sh
-git clone https://github.com/<your-username>/crc32tool.git
+git clone https://github.com/arguellocarlos/crc32tool.git
 ```
 
 ### 3. Enter the Project Directory
