@@ -167,7 +167,7 @@ fn collect_files(cli: &Cli) -> Vec<PathBuf> {
                 eprintln!("Error: '{}' is a directory. Use --recursive.", s);
                 std::process::exit(1);
             }
-
+            // Recursively walk directory and collect files
             for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
                 if entry.file_type().is_file() {
                     let file_path = entry.path().to_path_buf();
@@ -229,7 +229,7 @@ fn compute_crc32_live(
 
     let pb = mp.add(ProgressBar::new(total_size));
     let style = ProgressStyle::default_bar()
-        .template("{prefix:<50}  {bar:12.cyan/blue}  {msg}")
+        .template("{prefix:<50}  {bar:12.cyan/blue}  {msg}")  // Shows filename, progress bar, and status message
         .unwrap()
         .progress_chars("=>-");
 
@@ -624,9 +624,9 @@ fn export_results(files: Vec<PathBuf>, export_path: &PathBuf, threads: Option<us
 }
 
 //
-// ─────────────────────────────────────────────────────────────
+//
 //   BENCHMARK SUITE (Option C)
-// ─────────────────────────────────────────────────────────────
+//
 //
 
 fn bench_crc32(size: u64, threads: Option<usize>) {
@@ -644,10 +644,11 @@ fn bench_crc32(size: u64, threads: Option<usize>) {
 
     //
     // Single-thread benchmark
+    // Measures maximum single-threaded CRC32 throughput
     //
     println!("\n[1] Single-thread benchmark");
 
-    let mut buffer = vec![0u8; 1 * 1024 * 1024];
+    let buffer = vec![0u8; 1 * 1024 * 1024];
     let mut hasher = Hasher::new();
 
     let start = Instant::now();
@@ -666,6 +667,7 @@ fn bench_crc32(size: u64, threads: Option<usize>) {
 
     //
     // Multi-thread benchmark
+    // Measures total throughput across all available CPU cores
     //
     println!("\n[2] Multi-thread benchmark");
 
@@ -676,7 +678,7 @@ fn bench_crc32(size: u64, threads: Option<usize>) {
 
     (0..threads_used).into_par_iter().for_each(|_| {
         let mut hasher = Hasher::new();
-        let mut buffer = vec![0u8; 1 * 1024 * 1024];
+        let buffer = vec![0u8; 1 * 1024 * 1024];
         let mut processed = 0;
 
         while processed < per_thread {
@@ -693,11 +695,12 @@ fn bench_crc32(size: u64, threads: Option<usize>) {
 
     //
     // Buffer size comparison
+    // Tests how buffer size affects throughput (memory bandwidth vs CPU overhead)
     //
     println!("\n[3] Buffer size comparison");
 
     for &bs in &buffer_sizes {
-        let mut buffer = vec![0u8; bs];
+        let buffer = vec![0u8; bs];
 
         // Single-thread
         let start = Instant::now();
@@ -737,7 +740,7 @@ fn bench_crc32(size: u64, threads: Option<usize>) {
 }
 
 
-// ============================================================================
+//
 //  Main
 //
 
@@ -746,7 +749,7 @@ fn main() -> io::Result<()> {
 
     print_cpu_info();
 
-    // Benchmark mode
+    // Benchmark mode takes precedence - run benchmarks and exit
     if let Some(size_str) = cli.bench {
         let size = parse_size(&size_str).unwrap_or(4 * 1024 * 1024 * 1024);
         bench_crc32(size, cli.threads);
