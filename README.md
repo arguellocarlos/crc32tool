@@ -46,7 +46,9 @@ rsync is a powerful synchronization tool, but:
 - It is not designed for standalone hashing workflows
 - rsync is excellent for network synchronization, but not for fast, parallel integrity checking.
 
-**crc32tool** was built to provide a modern, fast, and transparent CRC32 workflow that neither Teracopy nor rsync offers.
+## crc32tool 
+
+crc32tool was built to provide a modern, fast, and transparent CRC32 workflow that neither Teracopy nor rsync offers.
 
 - Uses SSE4.2 CRC32 instruction when available, with clean fallback
 - Fully multi‑threaded using all CPU cores
@@ -61,4 +63,22 @@ Produces structured reports with:
 - Computed CRC
 - Status
 
-It is cross platform (Linux, Windows), written in Rust
+## Building from Source
+
+If you want to build **crc32tool** yourself instead of downloading a precompiled binary, follow these steps:
+
+### 1. Install Rust (Windows or Linux)
+Download and install Rust from the official website:
+
+👉 https://rust-lang.org/tools/install/
+
+This will install:
+- `rustc` (the Rust compiler)
+- `cargo` (the Rust build tool)
+- All required dependencies
+
+---
+
+### 2. Clone the Repository
+```sh
+git clone https://github.com/<your-username>/crc32tool.git
