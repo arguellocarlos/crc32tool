@@ -37,6 +37,7 @@ jobs:
 
       - name: Build Release (Linux)
         run: cargo build --release
+        working-directory: ${{ github.workspace }}
 
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
