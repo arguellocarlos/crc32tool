@@ -82,3 +82,22 @@ This will install:
 ### 2. Clone the Repository
 ```sh
 git clone https://github.com/<your-username>/crc32tool.git
+```
+
+### 3. Enter the Project Directory
+
+``` sh
+cd crc32tool
+```
+
+### 4. Build in Release Mode
+
+``` sh
+cargo build --release
+```
+
+You can now run crc32tool directly or add it to your PATH.
+
+## Disclaimer
+
+This project was developed with the assistance of **Microsoft Copilot**. All final design decisions, implementation details, and project direction were determined by myself.
