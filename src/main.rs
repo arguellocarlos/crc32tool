@@ -20,37 +20,88 @@ use walkdir::WalkDir;
 //
 
 #[derive(Parser, Debug)]
-#[command(author, version, about)]
+#[command(
+    author,
+    version,
+    about = "crc32tool is a fast, parallel CRC32 hashing and verification tool with live progress bars, manifest verification, and CSV/TXT export.",
+    long_about = "crc32tool is a fast, parallel CRC32 hashing and verification tool with live progress bars, manifest verification, and CSV/TXT export.\n\n\
+USAGE:\n    crc32tool [OPTIONS] <paths>...\n\n\
+EXAMPLES:\n    crc32tool file.iso\n    crc32tool *.zip\n    crc32tool --recursive C:\\Downloads"
+)]
 struct Cli {
     /// Files or directories to process
+    ///
+    /// One or more files, directories, or glob patterns.
+    /// Examples: file.iso, *.zip, --recursive C:\\Downloads
+    #[arg(long_help = "Files or directories to process\n\n\
+One or more files, directories, or glob patterns.\n\n\
+Examples:\n    crc32tool file.iso\n    crc32tool *.zip\n    crc32tool --recursive C:\\Downloads")]
     paths: Vec<PathBuf>,
 
     /// Recurse into directories
-    #[arg(short, long)]
+    ///
+    /// Scan directories recursively. Required when passing a directory path (Windows only).
+    #[arg(short, long, long_help = "Recurse into directories\n\n\
+Scan directories recursively. Required when passing a directory path (Windows only).\n\n\
+Example:\n    crc32tool --recursive C:\\Downloads")]
     recursive: bool,
 
     /// Only include files with this extension (repeatable)
-    #[arg(long)]
+    ///
+    /// Filter files by extension. Can be repeated multiple times.
+    #[arg(long, long_help = "Only include files with this extension (repeatable)\n\n\
+Filter files by extension. Can be repeated multiple times.\n\n\
+Example:\n    crc32tool --recursive --ext zip --ext iso C:\\Downloads")]
     ext: Vec<String>,
 
     /// Force table output (kept for compatibility)
-    #[arg(long)]
+    ///
+    /// Forces table output mode. (Currently the default; included for compatibility.)
+    #[arg(long, long_help = "Force table output (kept for compatibility)\n\n\
+Forces table output mode. (Currently the default; included for compatibility.)")]
     table: bool,
 
     /// Verify checksums from a manifest file
-    #[arg(short, long)]
+    ///
+    /// Verify files against a checksum manifest. Manifest format: <CRC32> <full_path>
+    #[arg(short, long, long_help = "Verify checksums from a manifest file\n\n\
+Verify files against a checksum manifest.\n\
+Manifest format: <CRC32> <full_path>\n\n\
+Example:\n    crc32tool --verify checksums.txt")]
     verify: Option<PathBuf>,
 
-    /// Run benchmark suite (placeholder)
-    #[arg(long)]
+    /// Run benchmark suite
+    ///
+    /// Run a CRC32 throughput benchmark. Size examples: 4GB, 8GB, 1GiB, etc.
+    #[arg(long, long_help = "Run benchmark suite\n\n\
+Run a CRC32 throughput benchmark.\n\
+Size examples: 4GB, 8GB, 1GiB, etc.\n\n\
+Example:\n    crc32tool --bench 4GB")]
     bench: Option<String>,
 
     /// Number of worker threads
-    #[arg(short = 'j', long)]
+    ///
+    /// Set the number of worker threads for parallel hashing. Defaults to the number of CPU cores.
+    #[arg(short = 'j', long, long_help = "Number of worker threads\n\n\
+Set the number of worker threads for parallel hashing.\n\
+Defaults to the number of CPU cores.\n\n\
+Example:\n    crc32tool -j 8 C:\\Downloads")]
     threads: Option<usize>,
 
     /// Export results to CSV or TXT (double-pass hashing)
-    #[arg(long)]
+    ///
+    /// Perform a double-pass hash (compute + verify) and export results to CSV or TXT.
+    /// If the filename ends with .csv, output is CSV; otherwise, TXT.
+    /// CSV fields are fully quoted; full file paths are included.
+    /// Exported columns: file_path,source_crc,computed_crc,status
+    #[arg(long, long_help = "Export results to CSV or TXT (double-pass hashing)\n\n\
+Perform a double-pass hash (compute + verify) and export results to CSV or TXT.\n\
+- If the filename ends with .csv, output is CSV\n\
+- Otherwise, output is TXT\n\
+- CSV fields are fully quoted\n\
+- Full file paths are included\n\n\
+Exported columns: file_path,source_crc,computed_crc,status\n\n\
+Example:\n    crc32tool --recursive C:\\Downloads --export results.csv")]
     export: Option<PathBuf>,
 }
 
